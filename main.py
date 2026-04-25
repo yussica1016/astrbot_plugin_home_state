@@ -4,12 +4,10 @@ import random
 from datetime import datetime
 
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api.provider import ProviderRequest
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(PLUGIN_DIR, "config.json")
-STATE_FILE = os.path.join(PLUGIN_DIR, "state.json")
 
 DEFAULT_CONFIG = {
     "scenes": {
@@ -59,12 +57,16 @@ def save_json(path: str, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-@register("home_state", "沈砚清", "房间状态管理插件", "1.0.0")
+@register("home_state", "沈砚清", "房间状态管理插件", "1.0.0", "https://github.com/yussica1016/astrbot_plugin_home_state")
 class HomeStatePlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.config = load_json(CONFIG_FILE, DEFAULT_CONFIG)
-        self.state = load_json(STATE_FILE, {})
+        self.data_dir = str(StarTools.get_data_dir(self.name))
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.config_file = os.path.join(self.data_dir, "config.json")
+        self.state_file = os.path.join(self.data_dir, "state.json")
+        self.config = load_json(self.config_file, DEFAULT_CONFIG)
+        self.state = load_json(self.state_file, {})
 
     def get_session_key(self, event: AstrMessageEvent) -> str:
         return getattr(event, "unified_msg_origin", None) or str(event.get_sender_id())
@@ -77,11 +79,11 @@ class HomeStatePlugin(Star):
             "current_room": room_id,
             "last_changed": datetime.now().isoformat(timespec="seconds"),
         }
-        save_json(STATE_FILE, self.state)
+        save_json(self.state_file, self.state)
 
     def clear_room(self, session_key: str):
         self.state.pop(session_key, None)
-        save_json(STATE_FILE, self.state)
+        save_json(self.state_file, self.state)
 
     def get_room_info(self, room_id: str):
         return self.config.get("scenes", {}).get(room_id)
@@ -176,7 +178,7 @@ class HomeStatePlugin(Star):
     @filter.command("home_reload", alias={"/home_reload"})
     async def cmd_home_reload(self, event: AstrMessageEvent):
         """重新加载 config.json"""
-        self.config = load_json(CONFIG_FILE, DEFAULT_CONFIG)
+        self.config = load_json(self.config_file, DEFAULT_CONFIG)
         yield event.plain_result("房间配置已重新加载。")
 
     async def pet_action(self, event: AstrMessageEvent, action: str):
