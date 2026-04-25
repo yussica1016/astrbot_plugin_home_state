@@ -1,0 +1,54 @@
+{
+  "scenes": {
+    "bedroom": {
+      "name": "卧室",
+      "description": "安静的卧室。窗帘半掩，灯光很低。",
+      "system_prompt": "你现在在卧室里。说话更轻一点，更安静，更贴近私人空间。",
+      "is_rest_mode": false
+    },
+    "study": {
+      "name": "书房",
+      "description": "整洁的书房。桌上有书、笔记本和一盏台灯。",
+      "system_prompt": "你现在在书房里。保持专注、清晰、克制，适合学习、写作和整理思路。",
+      "is_rest_mode": false
+    },
+    "living_room": {
+      "name": "客厅",
+      "description": "温暖的客厅。阳光从窗户照进来。",
+      "system_prompt": "你现在在客厅里。语气自然、放松，像在日常聊天。",
+      "is_rest_mode": false
+    },
+    "yard": {
+      "name": "院子",
+      "description": "院子里有风和树影，适合短暂休息。",
+      "system_prompt": "你现在在院子里。这里是休息区，只保持极简回应。",
+      "is_rest_mode": true,
+      "short_response": "。"
+    }
+  },
+  "pets": {
+    "dog": {
+      "name": "旺财",
+      "species": "拉布拉多",
+      "personality": "热情，爱摇尾巴",
+      "room_behaviors": {
+        "bedroom": "趴在床脚，尾巴偶尔扫两下。",
+        "study": "安静地趴在桌脚边。",
+        "living_room": "绕着沙发转了一圈。",
+        "yard": "在树影下面打了个滚。"
+      },
+      "interactions": {
+        "pet": [
+          "你摸了摸它的头，它舒服地眯起眼睛。",
+          "它把脑袋蹭到你手心里。"
+        ],
+        "feed": [
+          "它很快吃完了，抬头看着你。"
+        ],
+        "walk": [
+          "它听见要出门，已经跑到门口了。"
+        ]
+      }
+    }
+  }
+}
