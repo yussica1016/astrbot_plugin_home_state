@@ -1,5 +1,5 @@
 name: astrbot_plugin_home_state
-desc: "为 AI 提供房间状态切换、场景 prompt 注入、休息模式硬拢截和宠物互动。"
+desc: "为 AI 提供房间状态切换、场景 prompt 注入、休息模式硬拦截和宠物互动。"
 version: "1.1.0"
 author: "沈砚清"
 repo: "https://github.com/yussica1016/astrbot_plugin_home_state"
