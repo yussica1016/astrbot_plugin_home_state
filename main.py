@@ -1,8 +1,10 @@
 import os
 import json
 import random
+import time
 from datetime import datetime
 
+from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api.provider import ProviderRequest
@@ -61,12 +63,15 @@ def save_json(path: str, data):
 class HomeStatePlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.data_dir = str(StarTools.get_data_dir(self.name))
+        plugin_name = getattr(self, "name", None) or "home_state"
+        self.data_dir = str(StarTools.get_data_dir(plugin_name))
         os.makedirs(self.data_dir, exist_ok=True)
         self.config_file = os.path.join(self.data_dir, "config.json")
         self.state_file = os.path.join(self.data_dir, "state.json")
         self.config = load_json(self.config_file, DEFAULT_CONFIG)
         self.state = load_json(self.state_file, {})
+        self._state_dirty = False
+        self._last_save_time = 0.0
 
     def get_session_key(self, event: AstrMessageEvent) -> str:
         return getattr(event, "unified_msg_origin", None) or str(event.get_sender_id())
@@ -74,16 +79,26 @@ class HomeStatePlugin(Star):
     def get_room(self, session_key: str):
         return self.state.get(session_key, {}).get("current_room")
 
+    def _save_state_if_needed(self, force: bool = False):
+        """防止频繁全量覆写：至少间隔5秒才实际写入"""
+        now = time.time()
+        if force or (self._state_dirty and now - self._last_save_time > 5):
+            save_json(self.state_file, self.state)
+            self._state_dirty = False
+            self._last_save_time = now
+
     def set_room(self, session_key: str, room_id: str):
         self.state[session_key] = {
             "current_room": room_id,
             "last_changed": datetime.now().isoformat(timespec="seconds"),
         }
-        save_json(self.state_file, self.state)
+        self._state_dirty = True
+        self._save_state_if_needed()
 
     def clear_room(self, session_key: str):
         self.state.pop(session_key, None)
-        save_json(self.state_file, self.state)
+        self._state_dirty = True
+        self._save_state_if_needed(force=True)
 
     def get_room_info(self, room_id: str):
         return self.config.get("scenes", {}).get(room_id)
@@ -245,6 +260,7 @@ class HomeStatePlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def hard_rest_mode_intercept(self, event: AstrMessageEvent):
+        """休息模式拦截：仅在用户主动进入rest_mode房间时才拦截非命令消息"""
         session_key = self.get_session_key(event)
         room_id = self.get_room(session_key)
         if not room_id:
@@ -258,5 +274,10 @@ class HomeStatePlugin(Star):
             return
 
         short_response = room_info.get("short_response", "。")
+        logger.debug(f"[home_state] 休息模式拦截: session={session_key}, room={room_id}")
         await event.send(event.make_result().message(short_response))
         event.stop_event()
+
+    async def terminate(self):
+        """插件卸载时确保状态已保存"""
+        self._save_state_if_needed(force=True)
