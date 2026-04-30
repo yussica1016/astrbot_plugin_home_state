@@ -4,7 +4,6 @@ import random
 import time
 from datetime import datetime
 
-from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api.provider import ProviderRequest
