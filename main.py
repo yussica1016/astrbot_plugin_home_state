@@ -122,13 +122,6 @@ class HomeStatePlugin(Star):
 
         return text.strip()
 
-    def is_command_message(self, event: AstrMessageEvent) -> bool:
-        raw = (event.message_str or "").strip()
-        allowed = set(self.config.get("scenes", {}).keys())
-        slash_allowed = {f"/{x}" for x in allowed}
-        slash_allowed.update({"/leave", "/where", "/home_reload", "/rooms", "/pet", "/feed", "/walk"})
-        return raw.split()[0] in slash_allowed if raw else False
-
     async def enter_room(self, event: AstrMessageEvent, room_id: str):
         session_key = self.get_session_key(event)
         self.set_room(session_key, room_id)
