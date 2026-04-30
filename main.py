@@ -255,28 +255,17 @@ class HomeStatePlugin(Star):
         if not injected:
             return
 
+        # 休息模式下追加极简回复指令，但不阻断事件传播
+        if room_info.get("is_rest_mode", False):
+            rest_hint = room_info.get("rest_prompt", "你现在在休息区。只用极短的回复，一两个字即可。不主动展开话题。")
+            injected = f"{injected}\n{rest_hint}"
+
         current_system_prompt = getattr(req, "system_prompt", "") or ""
         req.system_prompt = f"{injected}\n\n{current_system_prompt}".strip()
 
-    @filter.event_message_type(filter.EventMessageType.ALL)
-    async def hard_rest_mode_intercept(self, event: AstrMessageEvent):
-        """休息模式拦截：仅在用户主动进入rest_mode房间时才拦截非命令消息"""
-        session_key = self.get_session_key(event)
-        room_id = self.get_room(session_key)
-        if not room_id:
-            return
-
-        room_info = self.get_room_info(room_id) or {}
-        if not room_info.get("is_rest_mode", False):
-            return
-
-        if self.is_command_message(event):
-            return
-
-        short_response = room_info.get("short_response", "。")
-        logger.debug(f"[home_state] 休息模式拦截: session={session_key}, room={room_id}")
-        await event.send(event.make_result().message(short_response))
-        event.stop_event()
+    # 注意：不再使用 event.stop_event() 硬拦截消息。
+    # 休息模式的简短回复通过 on_llm_request 注入 system_prompt 实现，
+    # 这样其他插件的 handler 仍然能正常处理消息，不会破坏插件生态。
 
     async def terminate(self):
         """插件卸载时确保状态已保存"""
