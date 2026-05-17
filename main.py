@@ -2,13 +2,16 @@ import os
 import json
 import random
 import time
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 
+from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api.provider import ProviderRequest
 
-PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+# 插件名常量，替代未定义的 self.name
+PLUGIN_NAME = "home_state"
 
 DEFAULT_CONFIG = {
     "scenes": {
@@ -41,15 +44,20 @@ DEFAULT_CONFIG = {
     "pets": {},
 }
 
+# 状态 TTL：超过此时间的会话将被自动清理（7天无活动）
+STATE_TTL = timedelta(days=7)
+
 
 def load_json(path: str, default):
+    """加载 JSON 文件，失败时记录警告但不覆盖文件。"""
     if not os.path.exists(path):
         save_json(path, default)
         return default
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        logger.warning(f"[home_state] 加载 {path} 失败: {e}，使用默认配置")
         return default
 
 
@@ -62,8 +70,7 @@ def save_json(path: str, data):
 class HomeStatePlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        plugin_name = getattr(self, "name", None) or "home_state"
-        self.data_dir = str(StarTools.get_data_dir(plugin_name))
+        self.data_dir = str(StarTools.get_data_dir(PLUGIN_NAME))
         os.makedirs(self.data_dir, exist_ok=True)
         self.config_file = os.path.join(self.data_dir, "config.json")
         self.state_file = os.path.join(self.data_dir, "state.json")
@@ -71,6 +78,7 @@ class HomeStatePlugin(Star):
         self.state = load_json(self.state_file, {})
         self._state_dirty = False
         self._last_save_time = 0.0
+        self._io_lock = asyncio.Lock()  # 防抖写入的并发锁
 
     def get_session_key(self, event: AstrMessageEvent) -> str:
         return getattr(event, "unified_msg_origin", None) or str(event.get_sender_id())
@@ -78,13 +86,32 @@ class HomeStatePlugin(Star):
     def get_room(self, session_key: str):
         return self.state.get(session_key, {}).get("current_room")
 
-    def _save_state_if_needed(self, force: bool = False):
-        """防止频繁全量覆写：至少间隔5秒才实际写入"""
-        now = time.time()
-        if force or (self._state_dirty and now - self._last_save_time > 5):
-            save_json(self.state_file, self.state)
-            self._state_dirty = False
-            self._last_save_time = now
+    async def _save_state_if_needed(self, force: bool = False):
+        """防抖写入：至少间隔5秒才实际写入，使用 asyncio.Lock 防止并发。"""
+        async with self._io_lock:
+            now = time.time()
+            if force or (self._state_dirty and now - self._last_save_time > 5):
+                save_json(self.state_file, self.state)
+                self._state_dirty = False
+                self._last_save_time = now
+
+    def _expire_stale_sessions(self):
+        """TTL 过期回收：清理超过 STATE_TTL 无活动的会话状态。"""
+        now = datetime.now()
+        expired_keys = []
+        for key, data in self.state.items():
+            last_str = data.get("last_changed")
+            if last_str:
+                try:
+                    last_time = datetime.fromisoformat(last_str)
+                    if now - last_time > STATE_TTL:
+                        expired_keys.append(key)
+                except (ValueError, TypeError):
+                    expired_keys.append(key)
+        for key in expired_keys:
+            del self.state[key]
+        if expired_keys:
+            logger.info(f"[home_state] 清理了 {len(expired_keys)} 个过期会话")
 
     def set_room(self, session_key: str, room_id: str):
         self.state[session_key] = {
@@ -92,12 +119,11 @@ class HomeStatePlugin(Star):
             "last_changed": datetime.now().isoformat(timespec="seconds"),
         }
         self._state_dirty = True
-        self._save_state_if_needed()
+        self._expire_stale_sessions()
 
     def clear_room(self, session_key: str):
         self.state.pop(session_key, None)
         self._state_dirty = True
-        self._save_state_if_needed(force=True)
 
     def get_room_info(self, room_id: str):
         return self.config.get("scenes", {}).get(room_id)
@@ -124,40 +150,43 @@ class HomeStatePlugin(Star):
     async def enter_room(self, event: AstrMessageEvent, room_id: str):
         session_key = self.get_session_key(event)
         self.set_room(session_key, room_id)
+        await self._save_state_if_needed()
         yield event.plain_result(self.build_room_entry_text(room_id))
 
-    @filter.command("bedroom", alias={"/bedroom"})
+    # 移除冗余的 /bedroom, /study 等别名，只保留纯命令名
+    @filter.command("bedroom")
     async def cmd_bedroom(self, event: AstrMessageEvent):
         """进入卧室"""
         async for result in self.enter_room(event, "bedroom"):
             yield result
 
-    @filter.command("study", alias={"/study"})
+    @filter.command("study")
     async def cmd_study(self, event: AstrMessageEvent):
         """进入书房"""
         async for result in self.enter_room(event, "study"):
             yield result
 
-    @filter.command("living_room", alias={"/living_room"})
+    @filter.command("living_room")
     async def cmd_living_room(self, event: AstrMessageEvent):
         """进入客厅"""
         async for result in self.enter_room(event, "living_room"):
             yield result
 
-    @filter.command("yard", alias={"/yard"})
+    @filter.command("yard")
     async def cmd_yard(self, event: AstrMessageEvent):
         """进入院子/休息区"""
         async for result in self.enter_room(event, "yard"):
             yield result
 
-    @filter.command("leave", alias={"/leave"})
+    @filter.command("leave")
     async def cmd_leave(self, event: AstrMessageEvent):
         """离开当前房间，恢复正常模式"""
         session_key = self.get_session_key(event)
         self.clear_room(session_key)
+        await self._save_state_if_needed(force=True)
         yield event.plain_result("已恢复正常模式。")
 
-    @filter.command("where", alias={"/where"})
+    @filter.command("where")
     async def cmd_where(self, event: AstrMessageEvent):
         """查看当前所在房间"""
         session_key = self.get_session_key(event)
@@ -168,7 +197,7 @@ class HomeStatePlugin(Star):
         room_info = self.get_room_info(room_id) or {}
         yield event.plain_result(f"当前房间：{room_info.get('name', room_id)}。")
 
-    @filter.command("rooms", alias={"/rooms"})
+    @filter.command("rooms")
     async def cmd_rooms(self, event: AstrMessageEvent):
         """查看所有房间"""
         scenes = self.config.get("scenes", {})
@@ -182,7 +211,7 @@ class HomeStatePlugin(Star):
         lines.append("/where - 查看当前位置")
         yield event.plain_result("\n".join(lines))
 
-    @filter.command("home_reload", alias={"/home_reload"})
+    @filter.command("home_reload")
     async def cmd_home_reload(self, event: AstrMessageEvent):
         """重新加载 config.json"""
         self.config = load_json(self.config_file, DEFAULT_CONFIG)
@@ -207,19 +236,19 @@ class HomeStatePlugin(Star):
             return
         yield event.plain_result(random.choice(items))
 
-    @filter.command("pet", alias={"/pet"})
+    @filter.command("pet")
     async def cmd_pet(self, event: AstrMessageEvent):
         """摸摸宠物，可写 /pet dog"""
         async for result in self.pet_action(event, "pet"):
             yield result
 
-    @filter.command("feed", alias={"/feed"})
+    @filter.command("feed")
     async def cmd_feed(self, event: AstrMessageEvent):
         """喂宠物，可写 /feed dog"""
         async for result in self.pet_action(event, "feed"):
             yield result
 
-    @filter.command("walk", alias={"/walk"})
+    @filter.command("walk")
     async def cmd_walk(self, event: AstrMessageEvent):
         """带宠物散步，可写 /walk dog"""
         async for result in self.pet_action(event, "walk"):
@@ -261,4 +290,4 @@ class HomeStatePlugin(Star):
 
     async def terminate(self):
         """插件卸载时确保状态已保存"""
-        self._save_state_if_needed(force=True)
+        await self._save_state_if_needed(force=True)
